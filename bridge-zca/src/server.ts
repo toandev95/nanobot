@@ -3,7 +3,8 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws";
-import { ZaloClient, LoginCredentials } from "./zalo.js";
+import { Credentials } from "zca-js";
+import { ZaloClient } from "./zalo.js";
 
 interface LoginCommand {
   type: "login";
@@ -18,7 +19,12 @@ interface SendCommand {
   text: string;
 }
 
-type BridgeCommand = LoginCommand | SendCommand;
+interface TypingCommand {
+  type: "typing";
+  to: string;
+}
+
+type BridgeCommand = LoginCommand | SendCommand | TypingCommand;
 
 interface BridgeMessage {
   type: "message" | "status" | "login" | "error";
@@ -52,14 +58,25 @@ export class BridgeServer {
         }
       });
 
-      ws.on("close", () => {
+      ws.on("close", async () => {
         console.log("🔌 Python client disconnected");
         this.clients.delete(ws);
+
+        if (this.clients.size === 0 && this.zalo) {
+          console.log("🧹 No clients remaining, disconnecting Zalo...");
+          await this.zalo.disconnect();
+          this.zalo = null;
+        }
       });
 
       ws.on("error", (error) => {
         console.error("WebSocket error:", error);
         this.clients.delete(ws);
+
+        if (this.clients.size === 0 && this.zalo) {
+          this.zalo.disconnect().catch(console.error);
+          this.zalo = null;
+        }
       });
     });
   }
@@ -72,6 +89,8 @@ export class BridgeServer {
       await this.handleLogin(cmd, ws);
     } else if (cmd.type === "send" && this.zalo) {
       await this.zalo.sendMessage(cmd.to, cmd.text);
+    } else if (cmd.type === "typing" && this.zalo) {
+      await this.zalo.sendTypingEvent(cmd.to);
     }
   }
 
@@ -86,7 +105,7 @@ export class BridgeServer {
       }
 
       // Login to Zalo
-      const credentials: LoginCredentials = {
+      const credentials: Credentials = {
         cookie: cmd.cookie,
         imei: cmd.imei,
         userAgent: cmd.userAgent,

@@ -2,13 +2,7 @@
  * Zalo client using zca-js library.
  */
 
-import { Zalo, API, ThreadType } from "zca-js";
-
-export interface LoginCredentials {
-  cookie: any;
-  imei: string;
-  userAgent: string;
-}
+import { Zalo, API, ThreadType, Credentials } from "zca-js";
 
 export interface InboundMessage {
   senderId: string;
@@ -35,7 +29,7 @@ export class ZaloClient {
     this.onStatus = options.onStatus;
   }
 
-  async login(credentials: LoginCredentials): Promise<void> {
+  async login(credentials: Credentials): Promise<void> {
     try {
       // Initialize Zalo instance
       this.zalo = new Zalo({
@@ -120,6 +114,19 @@ export class ZaloClient {
     } catch (error) {
       console.error("Failed to send message:", error);
       throw error;
+    }
+  }
+
+  async sendTypingEvent(threadId: string): Promise<void> {
+    if (!this.api) {
+      console.warn("Not logged in to Zalo");
+      return;
+    }
+
+    try {
+      await this.api.sendTypingEvent(threadId);
+    } catch (error) {
+      console.error("Failed to send typing event:", error);
     }
   }
 

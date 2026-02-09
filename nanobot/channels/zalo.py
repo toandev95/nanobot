@@ -27,6 +27,7 @@ class ZaloChannel(BaseChannel):
         self.config: ZaloConfig = config
         self._ws = None
         self._connected = False
+        self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
 
     async def start(self) -> None:
         """Start the Zalo channel by connecting to the bridge."""
@@ -71,6 +72,10 @@ class ZaloChannel(BaseChannel):
         self._running = False
         self._connected = False
 
+        # Cancel all typing indicators
+        for chat_id in list(self._typing_tasks):
+            self._stop_typing(chat_id)
+
         if self._ws:
             await self._ws.close()
             self._ws = None
@@ -80,6 +85,9 @@ class ZaloChannel(BaseChannel):
         if not self._ws or not self._connected:
             logger.warning("Zalo bridge not connected")
             return
+
+        # Stop typing indicator for this chat
+        self._stop_typing(msg.chat_id)
 
         try:
             payload = {"type": "send", "to": msg.chat_id, "text": msg.content}
@@ -132,6 +140,9 @@ class ZaloChannel(BaseChannel):
                 "is_group": data.get("isGroup", False),
             }
 
+            # Start typing indicator before processing
+            self._start_typing(chat_id)
+
             await self._handle_message(
                 sender_id=sender_id, chat_id=chat_id, content=content, metadata=metadata
             )
@@ -157,3 +168,30 @@ class ZaloChannel(BaseChannel):
 
         elif msg_type == "error":
             logger.error(f"Zalo bridge error: {data.get('error')}")
+
+    def _start_typing(self, chat_id: str) -> None:
+        """Start sending 'typing...' indicator for a chat."""
+        # Cancel any existing typing task for this chat
+        self._stop_typing(chat_id)
+        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+
+    def _stop_typing(self, chat_id: str) -> None:
+        """Stop the typing indicator for a chat."""
+        task = self._typing_tasks.pop(chat_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _typing_loop(self, chat_id: str) -> None:
+        """Repeatedly send 'typing' event until cancelled."""
+        if not self._ws or not self._connected:
+            return
+
+        try:
+            while self._ws and self._connected:
+                payload = {"type": "typing", "to": chat_id}
+                await self._ws.send(json.dumps(payload))
+                await asyncio.sleep(4)  # Send typing every 4 seconds
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Typing indicator stopped for {chat_id}: {e}")
