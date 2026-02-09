@@ -30,6 +30,16 @@ class FeishuConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user open_ids
 
 
+class ZaloConfig(BaseModel):
+    """Zalo channel configuration using zca-js bridge."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3002"  # WebSocket URL to zca-js bridge
+    cookie: str = ""  # Cookie JSON string from Zalo web
+    imei: str = ""  # Device IMEI from localStorage (z_uuid or sh_z_uuid)
+    user_agent: str = ""  # Browser user agent
+    allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
+
+
 class DiscordConfig(BaseModel):
     """Discord channel configuration."""
     enabled: bool = False
@@ -45,6 +55,7 @@ class ChannelsConfig(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    zalo: ZaloConfig = Field(default_factory=ZaloConfig)
 
 
 class AgentDefaults(BaseModel):

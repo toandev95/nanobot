@@ -77,6 +77,17 @@ class ChannelManager:
                 logger.info("Feishu channel enabled")
             except ImportError as e:
                 logger.warning(f"Feishu channel not available: {e}")
+        
+        # Zalo channel
+        if self.config.channels.zalo.enabled:
+            try:
+                from nanobot.channels.zalo import ZaloChannel
+                self.channels["zalo"] = ZaloChannel(
+                    self.config.channels.zalo, self.bus
+                )
+                logger.info("Zalo channel enabled")
+            except ImportError as e:
+                logger.warning(f"Zalo channel not available: {e}")
     
     async def start_all(self) -> None:
         """Start WhatsApp channel and the outbound dispatcher."""

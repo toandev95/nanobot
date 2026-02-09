@@ -31,7 +31,8 @@ class LiteLLMProvider(LLMProvider):
         # Detect OpenRouter by api_key prefix or explicit api_base
         self.is_openrouter = (
             (api_key and api_key.startswith("sk-or-")) or
-            (api_base and "openrouter" in api_base)
+            (api_base and "openrouter" in api_base) or
+            (api_base and "donglao" in api_base)
         )
         
         # Detect AiHubMix by api_base
@@ -120,6 +121,8 @@ class LiteLLMProvider(LLMProvider):
             model = f"openai/{model.split('/')[-1]}"
         elif self.is_vllm:
             model = f"hosted_vllm/{model}"
+
+        print(model)
         
         # kimi-k2.5 only supports temperature=1.0
         if "kimi-k2.5" in model.lower():
@@ -135,6 +138,7 @@ class LiteLLMProvider(LLMProvider):
         # Pass api_base directly for custom endpoints (vLLM, etc.)
         if self.api_base:
             kwargs["api_base"] = self.api_base
+            kwargs["base_url"] = self.api_base
         
         # Pass extra headers (e.g. APP-Code for AiHubMix)
         if self.extra_headers:

@@ -91,6 +91,7 @@ class TelegramChannel(BaseChannel):
         self.groq_api_key = groq_api_key
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
+        self._typing_tasks: dict[int, asyncio.Task] = {}  # Track typing indicator tasks
     
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -144,6 +145,11 @@ class TelegramChannel(BaseChannel):
         """Stop the Telegram bot."""
         self._running = False
         
+        # Cancel all typing tasks
+        for task in self._typing_tasks.values():
+            task.cancel()
+        self._typing_tasks.clear()
+        
         if self._app:
             logger.info("Stopping Telegram bot...")
             await self._app.updater.stop()
@@ -160,6 +166,10 @@ class TelegramChannel(BaseChannel):
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
+            
+            # Stop typing indicator when sending response
+            self._stop_typing(chat_id)
+            
             # Convert markdown to Telegram HTML
             html_content = _markdown_to_telegram_html(msg.content)
             await self._app.bot.send_message(
@@ -179,6 +189,44 @@ class TelegramChannel(BaseChannel):
                 )
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
+    
+    async def _send_typing_action(self, chat_id: int) -> None:
+        """Send typing indicator to a chat."""
+        if not self._app:
+            return
+        
+        try:
+            await self._app.bot.send_chat_action(
+                chat_id=chat_id,
+                action="typing"
+            )
+        except Exception as e:
+            logger.debug(f"Failed to send typing action: {e}")
+    
+    async def _keep_typing(self, chat_id: int) -> None:
+        """Keep sending typing indicator every 5 seconds until stopped."""
+        try:
+            while True:
+                await self._send_typing_action(chat_id)
+                await asyncio.sleep(5)  # Telegram typing indicator lasts ~5 seconds
+        except asyncio.CancelledError:
+            # Task was cancelled, stop sending typing indicators
+            pass
+    
+    def _start_typing(self, chat_id: int) -> None:
+        """Start showing typing indicator for a chat."""
+        # Cancel existing typing task for this chat if any
+        if chat_id in self._typing_tasks:
+            self._typing_tasks[chat_id].cancel()
+        
+        # Start new typing task
+        self._typing_tasks[chat_id] = asyncio.create_task(self._keep_typing(chat_id))
+    
+    def _stop_typing(self, chat_id: int) -> None:
+        """Stop showing typing indicator for a chat."""
+        if chat_id in self._typing_tasks:
+            self._typing_tasks[chat_id].cancel()
+            del self._typing_tasks[chat_id]
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
@@ -272,6 +320,9 @@ class TelegramChannel(BaseChannel):
         content = "\n".join(content_parts) if content_parts else "[empty message]"
         
         logger.debug(f"Telegram message from {sender_id}: {content[:50]}...")
+        
+        # Start showing typing indicator
+        self._start_typing(chat_id)
         
         # Forward to the message bus
         await self._handle_message(
