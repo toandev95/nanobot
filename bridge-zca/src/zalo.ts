@@ -80,6 +80,9 @@ export class ZaloClient {
         const isGroup = message.type === ThreadType.Group;
 
         // Forward to Python backend
+        console.log(
+          `📨 Message from ${senderId} in thread ${threadId.slice(0, 8)}...`,
+        );
         this.onMessage({
           senderId,
           threadId,
@@ -110,6 +113,7 @@ export class ZaloClient {
     }
 
     try {
+      console.log(`📤 Sending message to thread ${threadId.slice(0, 8)}...`);
       await this.api.sendMessage(text, threadId, type);
     } catch (error) {
       console.error("Failed to send message:", error);

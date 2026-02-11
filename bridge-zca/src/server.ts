@@ -114,7 +114,6 @@ export class BridgeServer {
       await this.zalo.login(credentials);
 
       ws.send(JSON.stringify({ type: "login", success: true }));
-      console.log("✅ Logged in to Zalo successfully");
     } catch (error) {
       console.error("❌ Failed to login to Zalo:", error);
       ws.send(
