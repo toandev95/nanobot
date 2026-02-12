@@ -1,5 +1,8 @@
 {
   "[python]": {
     "editor.formatOnSave": false
+  },
+  "[toml]": {
+    "editor.formatOnSave": false
   }
 }

@@ -147,7 +147,10 @@ class ChannelManager:
             try:
                 from nanobot.channels.zalo import ZaloChannel
                 self.channels["zalo"] = ZaloChannel(
-                    self.config.channels.zalo, self.bus
+                    self.config.channels.zalo,
+                    self.bus,
+                    groq_api_key=self.config.providers.groq.api_key,
+                    groq_api_base=self.config.providers.groq.api_base,
                 )
                 logger.info("Zalo channel enabled")
             except ImportError as e:

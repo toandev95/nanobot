@@ -2,12 +2,17 @@
  * Zalo client using zca-js library.
  */
 
-import { Zalo, API, ThreadType, Credentials } from "zca-js";
+import { Zalo, API as ZaloAPI, ThreadType, Credentials } from "zca-js";
 
-export interface InboundMessage {
+interface TAttachmentContent {
+  type: "attachment";
+  href: string;
+}
+
+interface InboundMessage {
   senderId: string;
   threadId: string;
-  content: string;
+  content: string | TAttachmentContent;
   messageId: string;
   timestamp: number;
   isGroup: boolean;
@@ -20,7 +25,7 @@ interface ZaloClientOptions {
 
 export class ZaloClient {
   private zalo: Zalo | null = null;
-  private api: API | null = null;
+  private api: ZaloAPI | null = null;
   private onMessage: (msg: InboundMessage) => void;
   private onStatus: (status: string) => void;
 
@@ -66,18 +71,31 @@ export class ZaloClient {
 
     this.api.listener.on("message", (message) => {
       try {
-        // Ignore non-text messages
-        if (typeof message.data.content !== "string") {
-          return;
-        }
+        console.debug(
+          "Received message content:",
+          JSON.stringify(message.data.content),
+        );
 
         // Extract message data
         const senderId = message.data?.uidFrom;
         const threadId = message.threadId;
-        const content = message.data?.content;
         const messageId = message.data?.msgId;
         const timestamp = Number(message.data?.ts) || Date.now();
         const isGroup = message.type === ThreadType.Group;
+
+        let content: string | TAttachmentContent;
+
+        // Handle different content types
+        if (typeof message.data.content === "string") {
+          content = message.data.content;
+        } else if (message.data.content.href !== null) {
+          content = {
+            type: "attachment",
+            href: message.data.content.href as string,
+          };
+        } else {
+          return;
+        }
 
         // Forward to Python backend
         console.log(

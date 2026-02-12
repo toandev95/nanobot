@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
+import aiohttp
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
@@ -22,9 +24,17 @@ class ZaloChannel(BaseChannel):
 
     name = "zalo"
 
-    def __init__(self, config: ZaloConfig, bus: MessageBus):
+    def __init__(
+        self,
+        config: ZaloConfig,
+        bus: MessageBus,
+        groq_api_key: str = "",
+        groq_api_base: str | None = None,
+    ):
         super().__init__(config, bus)
         self.config: ZaloConfig = config
+        self.groq_api_key = groq_api_key
+        self.groq_api_base = groq_api_base
         self._ws = None
         self._connected = False
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
@@ -131,7 +141,7 @@ class ZaloChannel(BaseChannel):
             # Incoming message from Zalo
             sender_id = data.get("senderId", "")
             chat_id = data.get("threadId", "")
-            content = data.get("content", "")
+            content_raw = data.get("content", "")
 
             # Extract metadata
             metadata: dict[str, Any] = {
@@ -140,11 +150,25 @@ class ZaloChannel(BaseChannel):
                 "is_group": data.get("isGroup", False),
             }
 
+            media_paths = []
+            if isinstance(content_raw, str):
+                content = content_raw
+            elif isinstance(content_raw, dict) and content_raw.get("type") == "attachment":
+                content, media_path = await self._handle_attachment_content(content_raw)
+                if media_path:
+                    media_paths.append(media_path)
+            else:
+                content = "[empty message]"
+
             # Start typing indicator before processing
             self._start_typing(chat_id)
 
             await self._handle_message(
-                sender_id=sender_id, chat_id=chat_id, content=content, metadata=metadata
+                sender_id=sender_id,
+                chat_id=chat_id,
+                content=content,
+                media=media_paths,
+                metadata=metadata,
             )
 
         elif msg_type == "status":
@@ -168,6 +192,142 @@ class ZaloChannel(BaseChannel):
 
         elif msg_type == "error":
             logger.error(f"Zalo bridge error: {data.get('error')}")
+
+    async def _handle_attachment_content(self, content: dict[str, Any]) -> tuple[str, str | None]:
+        """Download attachment and return content description and file path."""
+        href = content.get("href", "")
+
+        logger.info(f"Received attachment: {href}")
+
+        if not href:
+            return "[attachment: no URL]", None
+
+        # Download the file
+        try:
+            # Create media directory
+            media_dir = Path.home() / ".nanobot" / "media"
+            media_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate unique filename
+            import hashlib
+
+            file_hash = hashlib.md5(href.encode()).hexdigest()[:16]
+
+            # Download file first to get content type
+            async with aiohttp.ClientSession() as session:
+                async with session.get(href) as response:
+                    if response.status == 200:
+                        content_data = await response.read()
+                        content_type = response.headers.get("Content-Type", "").lower()
+
+                        # Get extension from MIME type
+                        ext = self._get_extension_from_mime(content_type)
+                        file_path = media_dir / f"zalo_{file_hash}{ext}"
+
+                        file_path.write_bytes(content_data)
+                        logger.info(f"Downloaded file to {file_path} (type: {content_type})")
+
+                        # Check if it's audio based on MIME type
+                        is_audio = content_type.startswith("audio/") or "audio" in content_type
+
+                        # Handle audio transcription
+                        if is_audio:
+                            try:
+                                from nanobot.providers.transcription import (
+                                    GroqTranscriptionProvider,
+                                )
+
+                                transcriber = GroqTranscriptionProvider(
+                                    api_key=self.groq_api_key, api_base=self.groq_api_base
+                                )
+                                transcription = await transcriber.transcribe(file_path)
+                                if transcription:
+                                    logger.info(f"Transcribed audio: {transcription[:50]}...")
+                                    return f"[transcription: {transcription}]", str(file_path)
+                            except Exception as e:
+                                logger.error(f"Failed to transcribe audio: {e}")
+
+                        # Determine file type for display
+                        if content_type.startswith("image/"):
+                            file_type = "image"
+                        elif content_type.startswith("video/"):
+                            file_type = "video"
+                        elif is_audio:
+                            file_type = "audio"
+                        else:
+                            file_type = "file"
+
+                        return f"[{file_type}: {file_path}]", str(file_path)
+                    else:
+                        logger.error(f"Failed to download file: HTTP {response.status}")
+                        return "[attachment: download failed]", None
+
+        except Exception as e:
+            logger.error(f"Error downloading attachment: {e}")
+            return f"[attachment: {href}]", None
+
+    def _get_extension_from_mime(self, mime_type: str) -> str:
+        """Get file extension from MIME type."""
+        mime_map = {
+            # Images
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/svg+xml": ".svg",
+            "image/tiff": ".tiff",
+            "image/x-icon": ".ico",
+            # Audio
+            "audio/ogg": ".ogg",
+            "audio/mpeg": ".mp3",
+            "audio/mp3": ".mp3",
+            "audio/mp4": ".m4a",
+            "audio/wav": ".wav",
+            "audio/wave": ".wav",
+            "audio/x-wav": ".wav",
+            "audio/aac": ".aac",
+            "audio/webm": ".weba",
+            "audio/flac": ".flac",
+            "audio/x-m4a": ".m4a",
+            # Video
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+            "video/avi": ".avi",
+            "video/x-msvideo": ".avi",
+            "video/mpeg": ".mpeg",
+            "video/quicktime": ".mov",
+            "video/x-matroska": ".mkv",
+            "video/3gpp": ".3gp",
+            "video/x-flv": ".flv",
+            # Documents
+            "application/pdf": ".pdf",
+            "application/msword": ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.ms-excel": ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/vnd.ms-powerpoint": ".ppt",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+            "text/plain": ".txt",
+            "text/csv": ".csv",
+            "text/html": ".html",
+            "application/json": ".json",
+            "application/xml": ".xml",
+            "text/xml": ".xml",
+            # Archives
+            "application/zip": ".zip",
+            "application/x-zip-compressed": ".zip",
+            "application/x-rar-compressed": ".rar",
+            "application/x-7z-compressed": ".7z",
+            "application/x-tar": ".tar",
+            "application/gzip": ".gz",
+            # Other
+            "application/octet-stream": ".bin",
+        }
+        # Extract main MIME type (before semicolon)
+        mime_type = mime_type.split(";")[0].strip()
+        return mime_map.get(mime_type, "")
 
     def _start_typing(self, chat_id: str) -> None:
         """Start sending 'typing...' indicator for a chat."""
